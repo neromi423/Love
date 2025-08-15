@@ -249,7 +249,6 @@
                 auth = getAuth(app);
                 console.log("Firebase 앱 및 DB 초기화 완료.");
 
-                // Attempt to sign in with a custom token first
                 const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
                 if (initialAuthToken) {
                     console.log("커스텀 토큰으로 로그인 시도 중...");
@@ -267,18 +266,20 @@
                     console.log("익명 로그인 성공.");
                 }
 
-                // Get the user ID and start the game after successful authentication
-                userId = auth.currentUser.uid;
-                document.getElementById('user-id').textContent = userId;
-                console.log("사용자 인증 완료. User ID:", userId);
-
-                // Start the game components
-                startAllGameComponents();
+                // Check for a user object and proceed
+                if (auth.currentUser) {
+                    userId = auth.currentUser.uid;
+                    document.getElementById('user-id').textContent = userId;
+                    console.log("사용자 인증 완료. User ID:", userId);
+                    startAllGameComponents();
+                } else {
+                    throw new Error("사용자 인증 객체를 찾을 수 없습니다.");
+                }
 
             } catch (error) {
                 console.error("Firebase 초기화 또는 로그인 중 심각한 오류 발생:", error);
-                document.getElementById('user-id').textContent = '초기화 실패';
-                messageBox.textContent = '로그인 실패. 게임을 시작할 수 없습니다.';
+                document.getElementById('user-id').textContent = '로그인 실패';
+                messageBox.textContent = `오류: ${error.message}`;
             }
         }
         
@@ -329,6 +330,9 @@
                 console.log("랭킹 보드가 성공적으로 로드되었습니다.");
             } catch (error) {
                 console.error("랭킹 데이터 로드 실패:", error);
+                // Inform the user about the failure
+                const leaderboardList = document.getElementById('leaderboard-list');
+                leaderboardList.innerHTML = `<li class="text-center text-red-500">랭킹을 불러올 수 없습니다. 권한 오류: ${error.message}</li>`;
             }
         }
         
@@ -518,7 +522,7 @@
                     await new Promise(resolve => setTimeout(resolve, delay * Math.pow(2, i)));
                 } catch (error) {
                     console.error(`Error during API call. Retrying (${i + 1}/${maxRetries}):`, error);
-                    await new Promise(resolve => setTimeout(resolve, delay * Math.pow(2, i)));
+                    await new new Promise(resolve => setTimeout(resolve, delay * Math.pow(2, i)));
                 }
             }
             throw new Error('API call failed: Exceeded max retries');
