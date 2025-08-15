@@ -216,7 +216,7 @@
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
         import { getAuth, signInWithCustomToken, signInAnonymously } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
-        import { getFirestore, collection, addDoc, getDocs, serverTimestamp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+        import { getFirestore, collection, addDoc, onSnapshot, query, orderBy, serverTimestamp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
         
         // --- Firebase Initialization and Auth ---
         
@@ -232,7 +232,8 @@
         // Function to start all game components after successful auth
         function startAllGameComponents() {
             loadGameState();
-            fetchLeaderboard();
+            // 랭킹 데이터를 실시간으로 감시하는 리스너를 설정합니다.
+            setupLeaderboardListener();
             
             // Start all game loops in one place
             gameLoopInterval = setInterval(updateStats, 1000);
@@ -285,18 +286,18 @@
         
         // --- Leaderboard Functions ---
 
-        // Function to fetch the leaderboard once
-        async function fetchLeaderboard() {
+        // Function to set up a real-time listener for the leaderboard
+        function setupLeaderboardListener() {
             if (!db) {
-                 console.error("fetchLeaderboard: DB가 초기화되지 않았습니다.");
-                 return;
+                console.error("setupLeaderboardListener: DB가 초기화되지 않았습니다.");
+                return;
             }
-            
+
             const leaderboardCollectionPath = `artifacts/${appId}/public/data/leaderboard`;
             const leaderboardRef = collection(db, leaderboardCollectionPath);
-            
-            try {
-                const querySnapshot = await getDocs(leaderboardRef);
+
+            // Using onSnapshot to get real-time updates
+            onSnapshot(leaderboardRef, (querySnapshot) => {
                 const scores = [];
                 querySnapshot.forEach(doc => {
                     const data = doc.data();
@@ -327,13 +328,12 @@
                     `;
                     leaderboardList.appendChild(listItem);
                 });
-                console.log("랭킹 보드가 성공적으로 로드되었습니다.");
-            } catch (error) {
+                console.log("랭킹 보드가 성공적으로 실시간 업데이트되었습니다.");
+            }, (error) => {
                 console.error("랭킹 데이터 로드 실패:", error);
-                // Inform the user about the failure
                 const leaderboardList = document.getElementById('leaderboard-list');
                 leaderboardList.innerHTML = `<li class="text-center text-red-500">랭킹을 불러올 수 없습니다. 권한 오류: ${error.message}</li>`;
-            }
+            });
         }
         
         // Helper function to format survival time
@@ -407,8 +407,8 @@
         let chatHistoryArray = [];
         let startTime;
 
-        // IMPORTANT: The API key for Gemini API
-        const geminiApiKey = "AIzaSyC8dFKgfFLNVpRceFKMcPVsYG63tAGtcqo";
+        // The API key is provided by the canvas environment, leave it as an empty string.
+        const geminiApiKey = "";
         const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-05-20:generateContent?key=${geminiApiKey}`;
 
         // Function to save game state to localStorage
@@ -456,6 +456,7 @@
              chatHistory.innerHTML = '<div class="speech-bubble pet-bubble">주인님! 이제왔냥? 보고싶었다냥!</div>';
              chatHistoryArray = [];
              startTime = Date.now();
+             updateGameOverState(false);
              saveGameState();
         }
 
@@ -485,7 +486,7 @@
                 try {
                     const chatPrompt = `너는 나의 다마고치 펫 '꼬기냥'이야. 너는 항상 냥냥체 반말로 대답해야 해.
                     예를 들면, "안녕냥!", "배고파냥...", "같이 놀아줘냥!" 같은 식으로 말이야.
-                    너의 현재 상태는 배고픔: ${pet.hunger}%, 행복: ${pet.happiness}%, 청결도: ${pet.cleanliness}%야.
+                    너의 현재 상태는 배고픔: ${Math.floor(pet.hunger)}%, 행복: ${Math.floor(pet.happiness)}%, 청결도: ${Math.floor(pet.cleanliness)}%야.
                     너는 대답할 때 이 상태를 **반드시 고려해야 해.**
                     특히 배고픔이 20% 이하면 "배고파냥...", 행복이 20% 이하면 "심심해냥...", 청결도가 20% 이하면 "몸이 찝찝해냥..." 같은 식으로 투덜거려줘.
                     대화 내용은 항상 100자 이내로 짧게 작성해줘.
@@ -522,7 +523,7 @@
                     await new Promise(resolve => setTimeout(resolve, delay * Math.pow(2, i)));
                 } catch (error) {
                     console.error(`Error during API call. Retrying (${i + 1}/${maxRetries}):`, error);
-                    await new new Promise(resolve => setTimeout(resolve, delay * Math.pow(2, i)));
+                    await new Promise(resolve => setTimeout(resolve, delay * Math.pow(2, i)));
                 }
             }
             throw new Error('API call failed: Exceeded max retries');
@@ -540,9 +541,6 @@
             chatButton.disabled = true;
 
             try {
-                if (!geminiApiKey) {
-                    throw new Error('API key is not configured.');
-                }
                 const petResponse = await fetchWithExponentialBackoff(userMessage);
                 addMessage('pet', petResponse);
                 chatHistoryArray.push({ role: 'pet', parts: [{ text: petResponse }] });
@@ -604,6 +602,7 @@
             cleanlinessBar.style.width = `${pet.cleanliness}%`;
             hungerValue.textContent = Math.floor(pet.hunger);
             happinessValue.textContent = Math.floor(pet.happiness);
+            // Fix: Changed pet.cleaniness to pet.cleanliness
             cleanlinessValue.textContent = Math.floor(pet.cleanliness);
             
             // Change image based on status
@@ -670,8 +669,6 @@
                         nameModal.classList.add('hidden');
                         gameOverArea.classList.remove('hidden');
                         console.log("랭킹에 이름이 성공적으로 등록되었습니다.");
-                        // After registering, update the leaderboard list
-                        fetchLeaderboard();
                     } catch (e) {
                         console.error("이름 업데이트 실패:", e);
                     }
