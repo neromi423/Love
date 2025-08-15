@@ -215,107 +215,100 @@
     <!-- Firebase SDK Scripts -->
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
-        import { getAuth, signInWithCustomToken, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
-        import { getFirestore, collection, addDoc, onSnapshot, serverTimestamp, doc, setDoc, updateDoc } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+        import { getAuth, signInWithCustomToken, signInAnonymously } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, collection, addDoc, getDocs, serverTimestamp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
         
         // --- Firebase Initialization and Auth ---
         
-        // Firestore 및 Auth 객체를 저장할 변수
+        // Variables to hold Firestore and Auth objects
         let db;
         let auth;
         let userId;
-        let currentScoreDocId = null;
 
-        // Firebase 설정 (환경 변수 사용)
+        // Firebase configuration (using environment variables)
         const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
         const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {};
         
-        // 게임 상태를 초기화하고 모든 리스너를 시작하는 함수
+        // Function to start all game components after successful auth
         function startAllGameComponents() {
             loadGameState();
-            listenForLeaderboardUpdates();
+            fetchLeaderboard();
             
-            // 모든 게임 루프를 한 곳에서 시작
+            // Start all game loops in one place
             gameLoopInterval = setInterval(updateStats, 1000);
             randomImageInterval = setInterval(setRandomPetImage, 30000);
-            scoreUpdateInterval = setInterval(updateCurrentScore, 5000); // 5초마다 점수 업데이트
         }
 
+        // Main Firebase initialization and authentication function
         async function initFirebase() {
             try {
                 console.log("Firebase 초기화 시작...");
-                // Firebase 앱 초기화
+                // Initialize Firebase App
                 const app = initializeApp(firebaseConfig);
                 db = getFirestore(app);
                 auth = getAuth(app);
                 console.log("Firebase 앱 및 DB 초기화 완료.");
 
-                // 인증 상태 변경 리스너 설정
-                onAuthStateChanged(auth, (user) => {
-                    if (user) {
-                        // 사용자 인증이 성공적으로 완료됨
-                        userId = user.uid;
-                        document.getElementById('user-id').textContent = userId;
-                        console.log("사용자 인증 완료. User ID:", userId);
-                        
-                        // 인증이 완료되면 게임을 시작
-                        startAllGameComponents();
-
-                    } else {
-                        // 인증 실패 시 익명 로그인 시도
-                        console.log("사용자 인증 실패. 익명 로그인 시도 중...");
-                        signInAnonymously(auth).then(() => {
-                            console.log("익명 로그인 성공.");
-                        }).catch((error) => {
-                            console.error("익명 로그인 실패:", error);
-                            document.getElementById('user-id').textContent = '로그인 실패';
-                            // 로그인 실패 시 게임 시작 막음
-                            messageBox.textContent = '로그인 실패. 게임을 시작할 수 없습니다.';
-                        });
-                    }
-                });
-                
-                // 앱 로드 시 커스텀 토큰으로 로그인 시도
+                // Attempt to sign in with a custom token first
                 const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
                 if (initialAuthToken) {
                     console.log("커스텀 토큰으로 로그인 시도 중...");
-                    await signInWithCustomToken(auth, initialAuthToken).catch(error => {
-                        console.error("커스텀 토큰 로그인 실패:", error);
-                    });
+                    try {
+                        await signInWithCustomToken(auth, initialAuthToken);
+                        console.log("커스텀 토큰 로그인 성공.");
+                    } catch (error) {
+                        console.error("커스텀 토큰 로그인 실패. 익명 로그인 시도 중:", error);
+                        await signInAnonymously(auth);
+                        console.log("익명 로그인 성공.");
+                    }
+                } else {
+                    console.log("커스텀 토큰 없음. 익명 로그인 시도 중...");
+                    await signInAnonymously(auth);
+                    console.log("익명 로그인 성공.");
                 }
 
+                // Get the user ID and start the game after successful authentication
+                userId = auth.currentUser.uid;
+                document.getElementById('user-id').textContent = userId;
+                console.log("사용자 인증 완료. User ID:", userId);
+
+                // Start the game components
+                startAllGameComponents();
+
             } catch (error) {
-                console.error("Firebase 초기화 중 심각한 오류 발생:", error);
+                console.error("Firebase 초기화 또는 로그인 중 심각한 오류 발생:", error);
                 document.getElementById('user-id').textContent = '초기화 실패';
+                messageBox.textContent = '로그인 실패. 게임을 시작할 수 없습니다.';
             }
         }
         
         // --- Leaderboard Functions ---
 
-        // 랭킹 보드를 실시간으로 업데이트하는 리스너 설정
-        function listenForLeaderboardUpdates() {
+        // Function to fetch the leaderboard once
+        async function fetchLeaderboard() {
             if (!db) {
-                 console.error("listenForLeaderboardUpdates: DB가 초기화되지 않았습니다.");
+                 console.error("fetchLeaderboard: DB가 초기화되지 않았습니다.");
                  return;
             }
             
             const leaderboardCollectionPath = `artifacts/${appId}/public/data/leaderboard`;
             const leaderboardRef = collection(db, leaderboardCollectionPath);
             
-            onSnapshot(leaderboardRef, (snapshot) => {
+            try {
+                const querySnapshot = await getDocs(leaderboardRef);
                 const scores = [];
-                snapshot.forEach(doc => {
+                querySnapshot.forEach(doc => {
                     const data = doc.data();
                     scores.push(data);
                 });
 
-                // 점수를 생존 시간(survivalTime) 기준으로 내림차순 정렬
+                // Sort scores in descending order of survivalTime
                 scores.sort((a, b) => b.survivalTime - a.survivalTime);
 
                 const leaderboardList = document.getElementById('leaderboard-list');
-                leaderboardList.innerHTML = ''; // 기존 목록 초기화
+                leaderboardList.innerHTML = ''; // Clear existing list
 
-                // 상위 15개 항목만 표시
+                // Display only the top 15 entries
                 const top15 = scores.slice(0, 15);
                 top15.forEach((score, index) => {
                     const listItem = document.createElement('li');
@@ -333,10 +326,10 @@
                     `;
                     leaderboardList.appendChild(listItem);
                 });
-                console.log("랭킹 보드가 업데이트되었습니다.");
-            }, (error) => {
+                console.log("랭킹 보드가 성공적으로 로드되었습니다.");
+            } catch (error) {
                 console.error("랭킹 데이터 로드 실패:", error);
-            });
+            }
         }
         
         // Helper function to format survival time
@@ -409,7 +402,6 @@
         let randomImageInterval;
         let chatHistoryArray = [];
         let startTime;
-        let scoreUpdateInterval; // Firestore score update interval
 
         // IMPORTANT: The API key for Gemini API
         const geminiApiKey = "AIzaSyC8dFKgfFLNVpRceFKMcPVsYG63tAGtcqo";
@@ -421,7 +413,6 @@
                 pet: pet,
                 chatHistoryArray: chatHistoryArray,
                 startTime: startTime,
-                currentScoreDocId: currentScoreDocId
             };
             localStorage.setItem('tamagotchiGameState', JSON.stringify(gameState));
         }
@@ -434,7 +425,6 @@
                 pet = gameState.pet;
                 chatHistoryArray = gameState.chatHistoryArray;
                 startTime = gameState.startTime;
-                currentScoreDocId = gameState.currentScoreDocId;
                 
                 const timeElapsed = (Date.now() - startTime) / 1000;
                 pet.hunger = Math.max(0, pet.hunger - timeElapsed * 0.1);
@@ -462,24 +452,7 @@
              chatHistory.innerHTML = '<div class="speech-bubble pet-bubble">주인님! 이제왔냥? 보고싶었다냥!</div>';
              chatHistoryArray = [];
              startTime = Date.now();
-            
-            try {
-                if (db && userId) {
-                    const leaderboardCollectionPath = `artifacts/${appId}/public/data/leaderboard`;
-                    const newScoreDoc = await addDoc(collection(db, leaderboardCollectionPath), {
-                        name: '익명의 집사',
-                        survivalTime: 0,
-                        timestamp: serverTimestamp(),
-                        userId: userId,
-                    });
-                    currentScoreDocId = newScoreDoc.id;
-                    saveGameState();
-                } else {
-                    console.warn("DB 또는 userId가 없어 새 랭킹 문서를 생성하지 못했습니다.");
-                }
-            } catch (e) {
-                console.error("랭킹 문서 생성 실패:", e);
-            }
+             saveGameState();
         }
 
         function showLoading() {
@@ -599,7 +572,6 @@
                 chatInput.disabled = true;
                 clearInterval(gameLoopInterval);
                 clearInterval(randomImageInterval);
-                clearInterval(scoreUpdateInterval);
                 messageBox.textContent = '펫이... 떠났어요. 😥';
                 petImage.src = statusImages.rip;
                 nameModal.classList.remove('hidden');
@@ -630,7 +602,7 @@
             happinessValue.textContent = Math.floor(pet.happiness);
             cleanlinessValue.textContent = Math.floor(pet.cleanliness);
             
-            // 상태에 따른 이미지 변경
+            // Change image based on status
             if (!isActionInProgress) {
                 if (pet.hunger === 0 || pet.happiness === 0 || pet.cleanliness === 0) {
                     updateGameOverState(true);
@@ -643,22 +615,6 @@
                 }
             }
             saveGameState();
-        }
-        
-        // Firestore에 현재 점수 업데이트
-        async function updateCurrentScore() {
-            if (!db || !currentScoreDocId) return;
-            const survivalTime = Math.floor((Date.now() - startTime) / 1000);
-
-            try {
-                const leaderboardCollectionPath = `artifacts/${appId}/public/data/leaderboard`;
-                const scoreDocRef = doc(db, leaderboardCollectionPath, currentScoreDocId);
-                await updateDoc(scoreDocRef, {
-                    survivalTime: survivalTime
-                });
-            } catch (e) {
-                console.error("현재 점수 업데이트 실패:", e);
-            }
         }
         
         function handleActionButton(action, actionImage, message) {
@@ -697,16 +653,21 @@
         submitNameButton.addEventListener('click', async () => {
             const name = butlerNameInput.value.trim();
             if (name) {
-                if (db && currentScoreDocId) {
+                if (db) {
                     try {
+                        const survivalTime = Math.floor((Date.now() - startTime) / 1000);
                         const leaderboardCollectionPath = `artifacts/${appId}/public/data/leaderboard`;
-                        const scoreDocRef = doc(db, leaderboardCollectionPath, currentScoreDocId);
-                        await updateDoc(scoreDocRef, {
-                            name: name
+                        await addDoc(collection(db, leaderboardCollectionPath), {
+                            name: name,
+                            survivalTime: survivalTime,
+                            timestamp: serverTimestamp(),
+                            userId: userId,
                         });
                         nameModal.classList.add('hidden');
                         gameOverArea.classList.remove('hidden');
                         console.log("랭킹에 이름이 성공적으로 등록되었습니다.");
+                        // After registering, update the leaderboard list
+                        fetchLeaderboard();
                     } catch (e) {
                         console.error("이름 업데이트 실패:", e);
                     }
@@ -723,12 +684,10 @@
         restartButton.addEventListener('click', () => {
             console.log("게임 재시작 버튼 클릭. 상태 초기화 중.");
             localStorage.removeItem('tamagotchiGameState');
-            currentScoreDocId = null; // Reset the score doc id
             
             // Clear and restart intervals
             clearInterval(gameLoopInterval);
             clearInterval(randomImageInterval);
-            clearInterval(scoreUpdateInterval);
             
             gameOverArea.classList.add('hidden');
             nameModal.classList.add('hidden');
