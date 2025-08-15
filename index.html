@@ -61,10 +61,53 @@
             border-top-color: #d1fae5;
             border-left-color: #d1fae5;
         }
+        .modal {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0, 0, 0, 0.5);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            z-index: 1000;
+        }
+        .modal-content {
+            background-color: white;
+            padding: 2rem;
+            border-radius: 1rem;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+        }
+        .leaderboard-list {
+            list-style: none;
+            padding: 0;
+            max-height: 250px;
+            overflow-y: auto;
+        }
+        .leaderboard-list li {
+            background-color: #f9fafb;
+            padding: 0.75rem;
+            border-radius: 0.5rem;
+            margin-bottom: 0.5rem;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .leaderboard-list li:first-child {
+            background-color: #fffbeb;
+            border: 2px solid #fde68a;
+            font-weight: bold;
+        }
     </style>
 </head>
 <body class="bg-gray-100 flex items-center justify-center min-h-screen p-4">
     <div id="game-container" class="bg-white rounded-3xl shadow-xl p-8 max-w-sm w-full transition-all duration-300 transform hover:scale-105">
+        <!-- 사용자 ID 표시 영역 -->
+        <div class="text-xs text-gray-500 mb-4 break-all">
+            <span class="font-bold">사용자 ID:</span> <span id="user-id">인증 중...</span>
+        </div>
+
         <!-- 게임 제목 및 메시지 영역 -->
         <h1 class="text-3xl font-bold text-center mb-4 text-gray-800">꼬기냥 키우기</h1>
         <div id="message-box" class="h-10 text-center text-sm text-gray-600 mb-6"></div>
@@ -142,13 +185,16 @@
             <button id="restart-button" class="bg-gray-500 hover:bg-gray-600 text-white font-bold py-2 px-6 rounded-xl shadow-md transition-all duration-200">다시 시작</button>
         </div>
 
+        <!-- 랭킹 보드 영역 -->
+        <div id="leaderboard-container" class="mt-8">
+            <h2 class="text-2xl font-bold text-center text-gray-800 mb-4">명예의 전당 (Top 15)</h2>
+            <ol id="leaderboard-list" class="leaderboard-list"></ol>
+        </div>
+
         <!-- Google AdSense 광고 영역 -->
         <div class="mt-8 text-center">
             <h3 class="text-lg font-semibold text-gray-700 mb-2">광고</h3>
-            <!-- 광고 배너를 표시할 div -->
             <div class="ad-container bg-gray-200 rounded-xl p-2 h-20 flex items-center justify-center">
-                <!-- 여기에 실제 AdSense 광고 코드가 삽입됩니다. -->
-                <!-- 이 코드는 예시이며, 실제 AdSense 코드로 대체해야 합니다. -->
                 <ins class="adsbygoogle"
                      style="display:block"
                      data-ad-client="ca-pub-4409329468172047"
@@ -158,10 +204,133 @@
 
     </div>
 
-    <!-- AdSense 스크립트 추가 (본인의 ID로 교체) -->
-    <script async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=ca-pub-4409329468172047" crossorigin="anonymous"></script>
+    <!-- 집사 이름 입력 모달 -->
+    <div id="name-modal" class="modal hidden">
+        <div class="modal-content text-center">
+            <h3 class="text-2xl font-bold mb-4">게임 오버! 펫이 떠났어요. 😥</h3>
+            <p class="mb-4">랭킹에 기록될 집사 이름을 입력해 주세요.</p>
+            <input type="text" id="butler-name-input" class="w-full p-2 border rounded-md mb-4 focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="집사 이름" maxlength="15">
+            <button id="submit-name-button" class="w-full bg-blue-500 hover:bg-blue-600 text-white font-bold py-2 rounded-xl">랭킹 등록</button>
+        </div>
+    </div>
 
-    <script>
+    <!-- Firebase SDK Scripts -->
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAuth, signInWithCustomToken, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, collection, addDoc, onSnapshot, serverTimestamp, doc, setDoc, updateDoc } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+        
+        // --- Firebase Initialization and Auth ---
+        
+        // Firestore 및 Auth 객체를 저장할 변수
+        let db;
+        let auth;
+        let userId;
+        let currentScoreDocId = null; // 현재 게임의 랭킹 문서 ID
+
+        // Firebase 설정 (환경 변수 사용)
+        const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+        const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {};
+
+        async function initFirebase() {
+            try {
+                // Firebase 앱 초기화
+                const app = initializeApp(firebaseConfig);
+                db = getFirestore(app);
+                auth = getAuth(app);
+
+                // 사용자가 인증될 때까지 기다림
+                const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
+                if (initialAuthToken) {
+                    await signInWithCustomToken(auth, initialAuthToken);
+                } else {
+                    await signInAnonymously(auth);
+                }
+
+                // 인증 상태 변경 리스너 설정
+                onAuthStateChanged(auth, (user) => {
+                    if (user) {
+                        userId = user.uid;
+                        document.getElementById('user-id').textContent = userId;
+                        // 인증이 완료되면 랭킹 리스너 시작
+                        listenForLeaderboardUpdates();
+                    } else {
+                        // 사용자 ID가 없으면 임의의 ID를 할당 (랭킹에 등록되지 않음)
+                        userId = crypto.randomUUID();
+                        document.getElementById('user-id').textContent = userId;
+                    }
+                    loadGameState();
+                    gameLoopInterval = setInterval(updateStats, 1000);
+                    randomImageInterval = setInterval(setRandomPetImage, 30000);
+                    scoreUpdateInterval = setInterval(updateCurrentScore, 5000); // 5초마다 점수 업데이트
+                });
+
+            } catch (error) {
+                console.error("Firebase 초기화 또는 로그인 실패:", error);
+                document.getElementById('user-id').textContent = '로그인 실패';
+            }
+        }
+        
+        // --- Leaderboard Functions ---
+
+        // 랭킹 보드를 실시간으로 업데이트하는 리스너 설정
+        function listenForLeaderboardUpdates() {
+            if (!db || !userId) return; // DB가 초기화되지 않았으면 리턴
+            
+            const leaderboardCollectionPath = `artifacts/${appId}/public/data/leaderboard`;
+            const leaderboardRef = collection(db, leaderboardCollectionPath);
+            
+            onSnapshot(leaderboardRef, (snapshot) => {
+                const scores = [];
+                snapshot.forEach(doc => {
+                    const data = doc.data();
+                    scores.push(data);
+                });
+
+                // 점수를 생존 시간(survivalTime) 기준으로 내림차순 정렬
+                scores.sort((a, b) => b.survivalTime - a.survivalTime);
+
+                const leaderboardList = document.getElementById('leaderboard-list');
+                leaderboardList.innerHTML = ''; // 기존 목록 초기화
+
+                // 상위 15개 항목만 표시
+                const top15 = scores.slice(0, 15);
+                top15.forEach((score, index) => {
+                    const listItem = document.createElement('li');
+                    listItem.classList.add('flex', 'justify-between', 'items-center', 'bg-white', 'p-3', 'rounded-lg', 'shadow-sm', 'mb-2');
+                    
+                    const rank = index + 1;
+                    const formattedSurvivalTime = formatTime(score.survivalTime);
+
+                    listItem.innerHTML = `
+                        <div class="flex items-center space-x-2">
+                            <span class="font-bold text-lg text-gray-700 w-6">${rank}.</span>
+                            <span class="text-gray-900 font-medium">${score.name}</span>
+                        </div>
+                        <span class="text-gray-600">${formattedSurvivalTime}</span>
+                    `;
+                    leaderboardList.appendChild(listItem);
+                });
+            });
+        }
+        
+        // Helper function to format survival time
+        function formatTime(seconds) {
+            if (seconds === 0) return '0초';
+            const minutes = Math.floor(seconds / 60);
+            const remainingSeconds = Math.floor(seconds % 60);
+            let timeString = '';
+            if (minutes > 0) {
+                timeString += `${minutes}분 `;
+            }
+            if (remainingSeconds > 0) {
+                timeString += `${remainingSeconds}초`;
+            }
+            return timeString.trim();
+        }
+
+        // --- Game Logic ---
+        
         // DOM elements
         const petImage = document.getElementById('pet-image');
         const messageBox = document.getElementById('message-box');
@@ -179,13 +348,15 @@
         const chatHistory = document.getElementById('chat-history');
         const gameOverArea = document.getElementById('game-over-area');
         const restartButton = document.getElementById('restart-button');
+        const nameModal = document.getElementById('name-modal');
+        const butlerNameInput = document.getElementById('butler-name-input');
+        const submitNameButton = document.getElementById('submit-name-button');
         
         // Pet state
         let pet = {
             hunger: 100,
             happiness: 100,
-            cleanliness: 100,
-            personality: "Gentle, Friendly, Sensitive, Submissive, Needy, Elegant, Mischievous, Humourous, Playful, Flirt, Patient, Mature, Horny, Jealous, Sarcastic, Romantic, Brat. 배고프거나 컨디션이 나빠지면 상태에 맞게 투덜거린다."
+            cleanliness: 100
         };
 
         // Pet image URLs
@@ -195,9 +366,9 @@
             clean: 'https://i.ibb.co/MxQCpqBP/image.gif'
         };
         const statusImages = {
-            hungry: 'https://placehold.co/160x160/ff0000/fff?text=Hungry',
+            hungry: 'https://i.ibb.co/9kzzt9tD/1755154938836.gif',
             sad: 'https://i.ibb.co/y3KjPQD/image.gif',
-            dirty: 'https://placehold.co/160x160/b5651d/fff?text=Dirty',
+            dirty: 'https://i.ibb.co/9kzzt9tD/1755154938836.gif',
             rip: 'https://i.ibb.co/Gvkm0vHB/istockphoto-506101328-1024x1024-1.jpg'
         };
         const normalImages = [
@@ -208,23 +379,69 @@
         ];
 
         let isGameOver = false;
-        let isActionInProgress = false; // Flag to prevent multiple actions at once
+        let isActionInProgress = false;
         let gameLoopInterval;
         let randomImageInterval;
         let chatHistoryArray = [];
-        let lastUpdateTime = Date.now(); // Last update time for state persistence
+        let startTime;
+        let scoreUpdateInterval; // Firestore 점수 업데이트 간격
+        let isMusicPlaying = false;
+
+        // IMPORT: Tone.js library
+        const toneScript = document.createElement('script');
+        toneScript.src = "https://cdnjs.cloudflare.com/ajax/libs/tone/14.8.49/Tone.js";
+        document.head.appendChild(toneScript);
+
+        let synth, loop;
+
+        function setupMusic() {
+            if (isMusicPlaying) return;
+            isMusicPlaying = true;
+            
+            // Create a synth
+            synth = new Tone.Synth({
+                oscillator: { type: "sine" },
+                envelope: {
+                    attack: 0.05,
+                    decay: 0.2,
+                    sustain: 0.5,
+                    release: 0.8
+                }
+            }).toDestination();
+
+            // Create a simple melody loop
+            const melody = ["C4", "E4", "G4", "C5", "G4", "E4"];
+            let noteIndex = 0;
+
+            loop = new Tone.Loop(time => {
+                const note = melody[noteIndex % melody.length];
+                synth.triggerAttackRelease(note, "8n", time);
+                noteIndex++;
+            }, "4n").start(0);
+
+            // Set tempo
+            Tone.Transport.bpm.value = 120;
+            Tone.Transport.start();
+        }
+
+        document.addEventListener('click', () => {
+            if (Tone.context.state !== 'running') {
+                Tone.context.resume();
+                setupMusic();
+            }
+        });
 
         // IMPORTANT: The API key for Gemini API
-        const apiKey = "AIzaSyC8dFKgfFLNVpRceFKMcPVsYG63tAGtcqo";
-        // API URL for gemini-2.5-flash-preview-05-20
-        const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-05-20:generateContent?key=${apiKey}`;
+        const geminiApiKey = "AIzaSyC8dFKgfFLNVpRceFKMcPVsYG63tAGtcqo";
+        const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-05-20:generateContent?key=${geminiApiKey}`;
 
         // Function to save game state to localStorage
         function saveGameState() {
             const gameState = {
                 pet: pet,
                 chatHistoryArray: chatHistoryArray,
-                lastUpdateTime: Date.now()
+                startTime: startTime,
+                currentScoreDocId: currentScoreDocId // Save the current score doc id
             };
             localStorage.setItem('tamagotchiGameState', JSON.stringify(gameState));
         }
@@ -236,19 +453,18 @@
                 const gameState = JSON.parse(savedState);
                 pet = gameState.pet;
                 chatHistoryArray = gameState.chatHistoryArray;
+                startTime = gameState.startTime;
+                currentScoreDocId = gameState.currentScoreDocId;
 
-                // Calculate the time elapsed since the last save and decrease pet stats
-                const timeElapsed = (Date.now() - gameState.lastUpdateTime) / 1000;
+                const timeElapsed = (Date.now() - startTime) / 1000;
                 pet.hunger -= timeElapsed * 0.1;
                 pet.happiness -= timeElapsed * 0.1;
                 pet.cleanliness -= timeElapsed * 0.1;
 
-                // Clamp values to 0
                 pet.hunger = Math.max(0, pet.hunger);
                 pet.happiness = Math.max(0, pet.happiness);
                 pet.cleanliness = Math.max(0, pet.cleanliness);
 
-                // Load chat history into UI
                 chatHistory.innerHTML = '';
                 chatHistoryArray.forEach(msg => {
                     addMessage(msg.role, msg.parts[0].text);
@@ -257,28 +473,47 @@
                 messageBox.textContent = '저장된 게임을 불러왔다냥!';
                 
             } else {
-                // Start a new game if no saved state exists
-                pet.hunger = 100;
-                pet.happiness = 100;
-                pet.cleanliness = 100;
-                chatHistory.innerHTML = '<div class="speech-bubble pet-bubble">주인님! 이제왔냥? 보고싶었다냥!</div>';
-                chatHistoryArray = [];
-                messageBox.textContent = '새로운 펫이 태어났어요! 🐣';
+                startNewGame();
             }
             updateStats();
         }
+        
+        async function startNewGame() {
+             // Set initial pet stats and start time
+             pet.hunger = 100;
+             pet.happiness = 100;
+             pet.cleanliness = 100;
+             messageBox.textContent = '새로운 펫이 태어났어요! 🐣';
+             chatHistory.innerHTML = '<div class="speech-bubble pet-bubble">주인님! 이제왔냥? 보고싶었다냥!</div>';
+             chatHistoryArray = [];
+             startTime = Date.now();
+            
+            // Create a new score document in Firestore with a placeholder name
+            try {
+                if (db && userId) {
+                    const leaderboardCollectionPath = `artifacts/${appId}/public/data/leaderboard`;
+                    const newScoreDoc = await addDoc(collection(db, leaderboardCollectionPath), {
+                        name: '익명의 집사', // Anonymous name
+                        survivalTime: 0,
+                        timestamp: serverTimestamp(),
+                        userId: userId,
+                    });
+                    currentScoreDocId = newScoreDoc.id;
+                    saveGameState();
+                }
+            } catch (e) {
+                console.error("랭킹 문서 생성 실패:", e);
+            }
+        }
 
-        // Function to display a loading message
         function showLoading() {
             messageBox.textContent = '펫이 생각 중입니다... 🤔';
         }
 
-        // Function to hide the loading message
         function hideLoading() {
             messageBox.textContent = '';
         }
 
-        // Function to add a chat message to the UI
         function addMessage(sender, text) {
             const messageDiv = document.createElement('div');
             messageDiv.classList.add('speech-bubble');
@@ -289,10 +524,9 @@
             }
             messageDiv.textContent = text;
             chatHistory.appendChild(messageDiv);
-            chatHistory.scrollTop = chatHistory.scrollHeight; // Auto-scroll to the bottom
+            chatHistory.scrollTop = chatHistory.scrollHeight;
         }
 
-        // API call function with exponential backoff for retries
         async function fetchWithExponentialBackoff(prompt, maxRetries = 5, delay = 1000) {
             for (let i = 0; i < maxRetries; i++) {
                 try {
@@ -331,8 +565,6 @@
                             return result.candidates[0].content.parts[0].text;
                         }
                     }
-
-                    // Retry on HTTP error or unexpected response
                     await new Promise(resolve => setTimeout(resolve, delay * Math.pow(2, i)));
                 } catch (error) {
                     await new Promise(resolve => setTimeout(resolve, delay * Math.pow(2, i)));
@@ -341,7 +573,6 @@
             throw new Error('API call failed: Exceeded max retries');
         }
 
-        // Chat button click handler
         chatButton.addEventListener('click', async () => {
             if (isGameOver) return;
             const userMessage = chatInput.value.trim();
@@ -354,14 +585,13 @@
             chatButton.disabled = true;
 
             try {
-                if (!apiKey) {
+                if (!geminiApiKey) {
                     throw new Error('API key is not configured.');
                 }
                 const petResponse = await fetchWithExponentialBackoff(userMessage);
                 addMessage('pet', petResponse);
                 chatHistoryArray.push({ role: 'pet', parts: [{ text: petResponse }] });
 
-                // Increase happiness slightly after a conversation
                 pet.happiness = Math.min(100, pet.happiness + 5);
                 messageBox.textContent = '펫이 대화를 즐거워하는 것 같아요! 😊';
                 updateStats();
@@ -374,25 +604,35 @@
             }
         });
         
-        // Function to change pet image randomly
         function setRandomPetImage() {
             if (isActionInProgress || isGameOver) return;
             const randomIndex = Math.floor(Math.random() * normalImages.length);
             petImage.src = normalImages[randomIndex];
         }
 
-        // Function to update game over state
         function updateGameOverState(gameOver) {
             isGameOver = gameOver;
             if (isGameOver) {
+                // 게임 오버 UI 표시
                 gameOverArea.classList.remove('hidden');
                 document.querySelectorAll('.action-button').forEach(button => button.disabled = true);
                 chatButton.disabled = true;
                 chatInput.disabled = true;
                 clearInterval(gameLoopInterval);
-                clearInterval(randomImageInterval); // Stop random image interval
+                clearInterval(randomImageInterval);
+                clearInterval(scoreUpdateInterval);
                 messageBox.textContent = '펫이... 떠났어요. 😥';
                 petImage.src = statusImages.rip;
+
+                if (isMusicPlaying) {
+                    Tone.Transport.stop();
+                    synth.dispose();
+                    isMusicPlaying = false;
+                }
+                
+                // 이름 입력 모달 표시
+                nameModal.classList.remove('hidden');
+
             } else {
                 gameOverArea.classList.add('hidden');
                 document.querySelectorAll('.action-button').forEach(button => button.disabled = false);
@@ -401,19 +641,17 @@
             }
         }
         
-        // Function to update stats and UI
         function updateStats() {
-            // Decrease stats over time
+            if (isGameOver) return;
+            
             pet.hunger -= 0.1;
             pet.happiness -= 0.1;
             pet.cleanliness -= 0.1;
             
-            // Clamp values to 0
             pet.hunger = Math.max(0, pet.hunger);
             pet.happiness = Math.max(0, pet.happiness);
             pet.cleanliness = Math.max(0, pet.cleanliness);
 
-            // Update UI
             hungerBar.style.width = `${pet.hunger}%`;
             happinessBar.style.width = `${pet.happiness}%`;
             cleanlinessBar.style.width = `${pet.cleanliness}%`;
@@ -421,7 +659,6 @@
             happinessValue.textContent = Math.floor(pet.happiness);
             cleanlinessValue.textContent = Math.floor(pet.cleanliness);
 
-            // Change pet image based on status (only if no action is in progress)
             if (!isActionInProgress) {
                 if (pet.hunger === 0 || pet.happiness === 0 || pet.cleanliness === 0) {
                     updateGameOverState(true);
@@ -434,11 +671,25 @@
                 }
             }
 
-            // Save game state periodically
             saveGameState();
         }
         
-        // Action button event handlers
+        // Firestore에 현재 점수 업데이트
+        async function updateCurrentScore() {
+            if (!db || !currentScoreDocId) return;
+            const survivalTime = Math.floor((Date.now() - startTime) / 1000);
+
+            try {
+                const leaderboardCollectionPath = `artifacts/${appId}/public/data/leaderboard`;
+                const scoreDocRef = doc(db, leaderboardCollectionPath, currentScoreDocId);
+                await updateDoc(scoreDocRef, {
+                    survivalTime: survivalTime
+                });
+            } catch (e) {
+                console.error("현재 점수 업데이트 실패:", e);
+            }
+        }
+        
         function handleActionButton(action, actionImage, message) {
             if (isGameOver || isActionInProgress) return;
             isActionInProgress = true;
@@ -448,11 +699,10 @@
 
             document.querySelectorAll('.action-button').forEach(button => button.disabled = true);
             
-            // Revert to original state after 3 seconds
             setTimeout(() => {
                 isActionInProgress = false;
                 document.querySelectorAll('.action-button').forEach(button => button.disabled = false);
-                updateStats(); // Update image based on current stats
+                updateStats();
             }, 3000);
         }
 
@@ -473,29 +723,50 @@
             pet.happiness = Math.max(0, pet.happiness - 5);
         });
 
+        submitNameButton.addEventListener('click', async () => {
+            const name = butlerNameInput.value.trim();
+            if (name) {
+                if (db && currentScoreDocId) {
+                    try {
+                        const leaderboardCollectionPath = `artifacts/${appId}/public/data/leaderboard`;
+                        const scoreDocRef = doc(db, leaderboardCollectionPath, currentScoreDocId);
+                        await updateDoc(scoreDocRef, {
+                            name: name
+                        });
+                        nameModal.classList.add('hidden');
+                        gameOverArea.classList.remove('hidden');
+                    } catch (e) {
+                        console.error("이름 업데이트 실패:", e);
+                    }
+                }
+            } else {
+                alert('이름을 입력해주세요!');
+            }
+        });
+        
         // Game restart function
         restartButton.addEventListener('click', () => {
-            localStorage.removeItem('tamagotchiGameState'); // Remove saved game state
-            pet.hunger = 100;
-            pet.happiness = 100;
-            pet.cleanliness = 100;
-            messageBox.textContent = '새로운 펫이 태어났어요! 🐣';
-            updateGameOverState(false);
-            chatHistory.innerHTML = '<div class="speech-bubble pet-bubble">주인님! 이제왔냥? 보고싶었다냥!</div>';
-            chatHistoryArray = [];
+            localStorage.removeItem('tamagotchiGameState');
+            currentScoreDocId = null; // Reset the score doc id
             
             // Clear and restart intervals
             clearInterval(gameLoopInterval);
             clearInterval(randomImageInterval);
+            clearInterval(scoreUpdateInterval);
+            
+            gameOverArea.classList.add('hidden');
+            nameModal.classList.add('hidden');
+            
+            // Start a new game
+            startNewGame();
             gameLoopInterval = setInterval(updateStats, 1000);
-            randomImageInterval = setInterval(setRandomPetImage, 30000); // Change image every 30 seconds
+            randomImageInterval = setInterval(setRandomPetImage, 30000);
+            scoreUpdateInterval = setInterval(updateCurrentScore, 5000);
         });
         
         // Game initialization on window load
         window.onload = function() {
-            loadGameState(); // Load game state from localStorage
-            gameLoopInterval = setInterval(updateStats, 1000);
-            randomImageInterval = setInterval(setRandomPetImage, 30000); // Change image every 30 seconds
+            initFirebase();
         };
     </script>
 </body>
