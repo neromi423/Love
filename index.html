@@ -239,7 +239,7 @@
                 db = getFirestore(app);
                 auth = getAuth(app);
 
-                // 사용자가 인증될 때까지 기다림
+                // Check for a pre-provided custom auth token, otherwise sign in anonymously.
                 const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
                 if (initialAuthToken) {
                     await signInWithCustomToken(auth, initialAuthToken);
@@ -385,51 +385,6 @@
         let chatHistoryArray = [];
         let startTime;
         let scoreUpdateInterval; // Firestore 점수 업데이트 간격
-        let isMusicPlaying = false;
-
-        // IMPORT: Tone.js library
-        const toneScript = document.createElement('script');
-        toneScript.src = "https://cdnjs.cloudflare.com/ajax/libs/tone/14.8.49/Tone.js";
-        document.head.appendChild(toneScript);
-
-        let synth, loop;
-
-        function setupMusic() {
-            if (isMusicPlaying) return;
-            isMusicPlaying = true;
-            
-            // Create a synth
-            synth = new Tone.Synth({
-                oscillator: { type: "sine" },
-                envelope: {
-                    attack: 0.05,
-                    decay: 0.2,
-                    sustain: 0.5,
-                    release: 0.8
-                }
-            }).toDestination();
-
-            // Create a simple melody loop
-            const melody = ["C4", "E4", "G4", "C5", "G4", "E4"];
-            let noteIndex = 0;
-
-            loop = new Tone.Loop(time => {
-                const note = melody[noteIndex % melody.length];
-                synth.triggerAttackRelease(note, "8n", time);
-                noteIndex++;
-            }, "4n").start(0);
-
-            // Set tempo
-            Tone.Transport.bpm.value = 120;
-            Tone.Transport.start();
-        }
-
-        document.addEventListener('click', () => {
-            if (Tone.context.state !== 'running') {
-                Tone.context.resume();
-                setupMusic();
-            }
-        });
 
         // IMPORTANT: The API key for Gemini API
         const geminiApiKey = "AIzaSyC8dFKgfFLNVpRceFKMcPVsYG63tAGtcqo";
@@ -623,12 +578,6 @@
                 clearInterval(scoreUpdateInterval);
                 messageBox.textContent = '펫이... 떠났어요. 😥';
                 petImage.src = statusImages.rip;
-
-                if (isMusicPlaying) {
-                    Tone.Transport.stop();
-                    synth.dispose();
-                    isMusicPlaying = false;
-                }
                 
                 // 이름 입력 모달 표시
                 nameModal.classList.remove('hidden');
